@@ -3,7 +3,8 @@
  * Python bindings to DepQBF (http://lonsing.github.io/depqbf/)
  * This file is published under the same license as DepQBF.
  */
-#define PYDEPQBF_URL  "http://lonsing.github.io/depqbf/"
+#define PYDEPQBF_URL "https://github.com/abfeldman/pydepqbf/"
+#define DEPQBF_URL "http://lonsing.github.io/depqbf/"
 
 #include <Python.h>
 
@@ -24,7 +25,7 @@
 #endif
 
 #if PY_MAJOR_VERSION == 2 && PY_MINOR_VERSION <= 5
-#define PyUnicode_FromString  PyString_FromString
+#define PyUnicode_FromString PyString_FromString
 #endif
 
 #include <qdpll.h>
@@ -230,9 +231,8 @@ static QDPLL *setup_depqbf(PyObject *args, PyObject *kwds)
     if (qdpll == NULL) {
         return NULL;
     }
-/*
-    qdpll_configure(qdpll, "--dep-man=simple");
-*/
+
+    qdpll_configure(qdpll, "--no-dynamic-nenofex");
 
     if (add_quantifiers(qdpll, quantifiers) < 0) {
         return NULL;
@@ -245,32 +245,98 @@ static QDPLL *setup_depqbf(PyObject *args, PyObject *kwds)
     return qdpll;
 }
 
+static PyObject *get_solution(QDPLL *qdpll)
+{
+    PyObject *list;
+    VarID max_idx;
+    VarID i;
+    QDPLLAssignment v;
+
+    list = PyList_New(0);
+    if (list == NULL) {
+        return NULL;
+    }
+
+    max_idx = qdpll_get_max_declared_var_id(qdpll);
+    for (i = 1; i <= max_idx; i++) {
+        v = qdpll_get_value(qdpll, i);
+
+        if (v == QDPLL_ASSIGNMENT_FALSE) {
+            if (PyList_Append(list,
+                              PyInt_FromLong(-(long)i)) < 0) {
+                Py_DECREF(list);
+                return NULL;
+            }
+        }
+        if (v == QDPLL_ASSIGNMENT_TRUE) {
+            if (PyList_Append(list,
+                              PyInt_FromLong((long)i)) < 0) {
+                Py_DECREF(list);
+                return NULL;
+            }
+        }
+    }
+
+    return list;
+}
+
 static PyObject *solve(PyObject *self, PyObject *args, PyObject *kwds)
 {
     QDPLL *qdpll;
 
     PyObject *result = NULL;
-    QDPLLResult rc;
+    QDPLLResult is_sat;
+    PyObject *solution = NULL;
 
     qdpll = setup_depqbf(args, kwds);
-/*
-    qdpll_print(qdpll, stdout);
-*/
-    rc = qdpll_sat(qdpll);
+    if (qdpll == NULL) {
+        return NULL;
+    }
+    is_sat = qdpll_sat(qdpll);
 
-    result = PyInt_FromLong(rc);
-
+    result = PyTuple_New(2);
+    if (result == NULL) {
+        return NULL;
+    }
+    if (PyTuple_SetItem(result,
+                        (Py_ssize_t)0,
+                        PyInt_FromLong(is_sat)) < 0) {
+        Py_DECREF(result);
+        return NULL;
+    }
+    switch (is_sat) {
+        case QDPLL_RESULT_SAT:
+        case QDPLL_RESULT_UNSAT:
+            solution = get_solution(qdpll);
+            break;
+        case QDPLL_RESULT_UNKNOWN:
+            break;
+        default:
+            PyErr_Format(PyExc_SystemError, "pydepqbf return value: %d", is_sat);
+    }
+    
+    if (PyTuple_SetItem(result,
+                        (Py_ssize_t)1,
+                        solution) < 0) {
+        Py_DECREF(result);
+        return NULL;
+    }
+        
     qdpll_delete(qdpll);
 
     return result;
 }
 
 PyDoc_STRVAR(solve_doc,
-"solve(clauses [, kwargs]) -> list\n\
+"solve(quantifiers, clauses) -> (is_sat, pcert)\n\
 \n\
-Solve the QBF problem for the clauses, and return a solution as a\n\
-list of integers, or one of the strings \"UNSAT\", \"UNKNOWN\".\n\
-Please see " PYDEPQBF_URL " for more details.");
+Solve the QBF problem for the clauses, and return a tuple\n\
+(is_sat, pcert). The first element of the result tuple (is_sat)\n\
+is either QDPLL_RESULT_SAT, or QDPLL_RESULT_UNSAT, or\n\
+QDPLL_RESULT_UNKNOWN. The second element is a partial certificate\n\
+(pcert) and is a list of integers or None.\n\
+Please see " DEPQBF_URL " and \n\
+" PYDEPQBF_URL " for more details.");
 
 /* Method definitions */
 
