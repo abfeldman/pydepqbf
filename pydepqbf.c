@@ -30,68 +30,80 @@
 
 #include <qdpll.h>
 
-inline static void *py_malloc(void *mmgr, size_t bytes)
+typedef struct
 {
-    return PyMem_Malloc(bytes);
-}
+    QDPLLQuantifierType type;
+    Py_ssize_t len;
+    VarID *vars;
+} Quantifier;
 
-inline static void *py_realloc(void *mmgr, void *ptr, size_t old, size_t new)
+static int add_quantifier(QDPLL *qdpll,
+                          PyObject *quantifier,
+                          Nesting nesting,
+                          Quantifier **outermost_quantifier)
 {
-    return PyMem_Realloc(ptr, new);
-}
-
-inline static void py_free(void *mmgr, void *ptr, size_t bytes)
-{
-    PyMem_Free(ptr);
-}
-
-static int add_quantifier(QDPLL *qdpll, PyObject *quantifier, Nesting nesting)
-{
-    PyObject *iterator;         /* each clause is an iterable of literals */
-    PyObject *lit;              /* the literals are integers */
+    PyObject *iterator;         /* each quantifier is an iterable of variables */
+    PyObject *var;              /* the variables are integers */
     PyObject *type;
-    PyObject *lits;
-/*
-    Py_ssize_t l;
-    int f;
-*/
+    PyObject *vars;
+    Py_ssize_t idx = 0;
+
     int v;
     int t;
 
-/*
-    f = PySequence_Check(quantifier);
-    l = PySequence_Length(quantifier);
-*/
+    if (!PySequence_Check(quantifier) ||
+        PySequence_Length(quantifier) != 2) {
+        PyErr_SetString(PyExc_TypeError, "quantifier sequence of size two expected");
+
+        return -1;
+    }
 
     type = PySequence_GetItem(quantifier, 0);
-    lits = PySequence_GetItem(quantifier, 1);
-/*
-    IS_INT(type);
-*/
+    if (!IS_INT(type))  {
+        PyErr_SetString(PyExc_TypeError, "integer expected");
+
+        return -1;
+    }
+    
+    vars = PySequence_GetItem(quantifier, 1);
     t = PyLong_AsLong(type);
+
+    if (nesting == 1) {
+        *outermost_quantifier = PyMem_Malloc(sizeof(Quantifier));
+        if (*outermost_quantifier == NULL) {
+            return -1;
+        }
+        (*outermost_quantifier)->type = t;
+        (*outermost_quantifier)->len = PySequence_Length(vars);
+        (*outermost_quantifier)->vars = PyMem_Malloc(sizeof(VarID) * (*outermost_quantifier)->len);
+    }
 
     qdpll_new_scope_at_nesting(qdpll, t, nesting);
 
-    iterator = PyObject_GetIter(lits);
+    iterator = PyObject_GetIter(vars);
     if (iterator == NULL) {
         return -1;
     }
 
-    while ((lit = PyIter_Next(iterator)) != NULL) {
-        if (!IS_INT(lit))  {
-            Py_DECREF(lit);
+    while ((var = PyIter_Next(iterator)) != NULL) {
+        if (!IS_INT(var))  {
+            Py_DECREF(var);
             Py_DECREF(iterator);
             PyErr_SetString(PyExc_TypeError, "integer expected");
 
             return -1;
         }
-        v = PyLong_AsLong(lit);
-        Py_DECREF(lit);
+        v = PyLong_AsLong(var);
+        Py_DECREF(var);
         if (v == 0) {
             Py_DECREF(iterator);
             PyErr_SetString(PyExc_ValueError, "non-zero integer expected");
 
             return -1;
+        }
+        if (nesting == 1) {
+            (*outermost_quantifier)->vars[idx] = v;
+            idx += 1;
         }
         qdpll_add(qdpll, v);
     }
@@ -146,7 +158,9 @@ static int add_clause(QDPLL *qdpll, PyObject *clause)
     return 0;
 }
 
-static int add_quantifiers(QDPLL *qdpll, PyObject *quantifiers)
+static int add_quantifiers(QDPLL *qdpll,
+                           PyObject *quantifiers,
+                           Quantifier **outermost_quantifier)
 {
     PyObject *iterator;       /* clauses can be any iterable */
     PyObject *item;           /* each clause is an iterable of intergers */
@@ -160,7 +174,10 @@ static int add_quantifiers(QDPLL *qdpll, PyObject *quantifiers)
     }
 
     while ((item = PyIter_Next(iterator)) != NULL) {
-        if (add_quantifier(qdpll, item, nesting) < 0) {
+        if (add_quantifier(qdpll,
+                           item,
+                           nesting,
+                           outermost_quantifier) < 0) {
             Py_DECREF(item);
             Py_DECREF(iterator);
 
@@ -207,7 +224,9 @@ static int add_clauses(QDPLL *qdpll, PyObject *clauses)
     return 0;
 }
 
-static QDPLL *setup_depqbf(PyObject *args, PyObject *kwds)
+static QDPLL *setup_depqbf(PyObject *args,
+                           PyObject *kwds,
+                           Quantifier **outermost_quantifier)
 {
     QDPLL *qdpll;
 
@@ -234,7 +253,9 @@ static QDPLL *setup_depqbf(PyObject *args, PyObject *kwds)
 
     qdpll_configure(qdpll, "--no-dynamic-nenofex");
 
-    if (add_quantifiers(qdpll, quantifiers) < 0) {
+    if (add_quantifiers(qdpll,
+                        quantifiers,
+                        outermost_quantifier) < 0) {
         return NULL;
     }
 
@@ -245,10 +266,13 @@ static QDPLL *setup_depqbf(PyObject *args, PyObject *kwds)
     return qdpll;
 }
 
-static PyObject *get_solution(QDPLL *qdpll)
+static PyObject *get_pcert(QDPLL *qdpll,
+                           Quantifier *outermost_quantifier,
+                           QDPLLResult is_sat)
 {
     PyObject *list;
     VarID max_idx;
+    VarID idx;
     VarID i;
     QDPLLAssignment v;
 
@@ -257,8 +281,38 @@ static PyObject *get_solution(QDPLL *qdpll)
         return NULL;
     }
 
-    max_idx = qdpll_get_max_declared_var_id(qdpll);
-    for (i = 1; i <= max_idx; i++) {
+    if (outermost_quantifier == NULL) {
+        max_idx = qdpll_get_max_declared_var_id(qdpll);
+        for (i = 1; i <= max_idx; i++) {
+            v = qdpll_get_value(qdpll, i);
+
+            if (v == QDPLL_ASSIGNMENT_FALSE) {
+                if (PyList_Append(list,
+                                  PyInt_FromLong(-(long)i)) < 0) {
+                    Py_DECREF(list);
+                    return NULL;
+                }
+            }
+            if (v == QDPLL_ASSIGNMENT_TRUE) {
+                if (PyList_Append(list,
+                                  PyInt_FromLong((long)i)) < 0) {
+                    Py_DECREF(list);
+                    return NULL;
+                }
+            }
+        }
+        
+        return list;
+    }
+
+    if ((is_sat == QDPLL_RESULT_SAT && outermost_quantifier->type != QDPLL_QTYPE_EXISTS) ||
+        (is_sat == QDPLL_RESULT_UNSAT && outermost_quantifier->type != QDPLL_QTYPE_FORALL)) {
+        return list;
+    }
+
+    max_idx = outermost_quantifier->len;
+    for (idx = 0; idx < max_idx; idx++) {
+        i = outermost_quantifier->vars[idx];
         v = qdpll_get_value(qdpll, i);
 
         if (v == QDPLL_ASSIGNMENT_FALSE) {
@@ -280,15 +334,21 @@ static PyObject *get_solution(QDPLL *qdpll)
     return list;
 }
 
-static PyObject *solve(PyObject *self, PyObject *args, PyObject *kwds)
+static PyObject *solve(PyObject *self,
+                       PyObject *args,
+                       PyObject *kwds)
 {
     QDPLL *qdpll;
 
     PyObject *result = NULL;
     QDPLLResult is_sat;
-    PyObject *solution = NULL;
+    PyObject *pcert = NULL;
 
-    qdpll = setup_depqbf(args, kwds);
+    Quantifier *outermost_quantifier = NULL;
+
+    qdpll = setup_depqbf(args,
+                         kwds,
+                         &outermost_quantifier);
     if (qdpll == NULL) {
         return NULL;
     }
@@ -307,7 +367,7 @@ static PyObject *solve(PyObject *self, PyObject *args, PyObject *kwds)
     switch (is_sat) {
         case QDPLL_RESULT_SAT:
         case QDPLL_RESULT_UNSAT:
-            solution = get_solution(qdpll);
+            pcert = get_pcert(qdpll, outermost_quantifier, is_sat);
             break;
         case QDPLL_RESULT_UNKNOWN:
             break;
@@ -317,9 +377,14 @@ static PyObject *solve(PyObject *self, PyObject *args, PyObject *kwds)
     
     if (PyTuple_SetItem(result,
                         (Py_ssize_t)1,
-                        solution) < 0) {
+                        pcert) < 0) {
         Py_DECREF(result);
         return NULL;
+    }
+
+    if (outermost_quantifier != NULL) {
+        PyMem_Free(outermost_quantifier->vars);
+        PyMem_Free(outermost_quantifier);
     }
         
     qdpll_delete(qdpll);

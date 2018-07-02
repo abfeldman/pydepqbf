@@ -2,8 +2,20 @@ from distutils.core import setup, Extension
 
 VERSION = '0.0.1'
 PYDEPQBF_MODULE = Extension("pydepqbf",
-                            sources=["pydepqbf.c"],
-                            libraries=["qdpll", "picosat", "nenofex"])
+                            include_dirs=["."],
+                            sources=["pydepqbf.c",
+                                     "qdpll.c",
+                                     "qdpll_dep_man_qdag.c",
+                                     "qdpll_dynamic_nenofex.c",
+                                     "qdpll_mem.c",
+                                     "qdpll_pqueue.c",
+                                     "picosat/picosat.c",
+                                     "picosat/version.c",
+                                     "nenofex/atpg.c",
+                                     "nenofex/mem.c",
+                                     "nenofex/nenofex.c",
+                                     "nenofex/queue.c",
+                                     "nenofex/stack.c"])
 
 setup(name="pydepqbf",
       version=VERSION,

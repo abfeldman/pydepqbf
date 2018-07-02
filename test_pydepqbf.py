@@ -17,8 +17,12 @@ class TestSolve(unittest.TestCase):
         self.assertRaises(TypeError, solve, None, None)
         self.assertRaises(TypeError, solve, 1, 2)
         self.assertRaises(TypeError, solve, 1.0, 2.0)
-#        self.assertRaises(TypeError, solve, 'a', 'b')
+        self.assertRaises(TypeError, solve, 'a', 'b')
         self.assertRaises(TypeError, solve, object(), object())
+        self.assertRaises(TypeError, solve, [()], [])
+        self.assertRaises(TypeError, solve, [(QDPLL_RESULT_SAT, (), ())], [])
+        self.assertRaises(TypeError, solve, (('a', (1, 2)), (QDPLL_QTYPE_EXISTS, (3, 4))), ((1, -4),))
+        self.assertRaises(TypeError, solve, ((1.0, (1, 2)), (QDPLL_QTYPE_EXISTS, (3, 4))), ((1, -4),))
 
     def test_empty(self):
         result = solve([], [])
@@ -30,7 +34,7 @@ class TestSolve(unittest.TestCase):
                        ((-1, -3),
                         (1, 2, 4),
                         (1, -4)))
-        self.assertEqual(result, (QDPLL_RESULT_UNSAT, [-1, -2, 3, 4]))
+        self.assertEqual(result, (QDPLL_RESULT_UNSAT, [-1, -2]))
 
     def test_basic_qbf_sat(self):
         result = solve(((QDPLL_QTYPE_FORALL, (1, 2)),
