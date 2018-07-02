@@ -4,6 +4,7 @@ pydepqbf: bindings to DepQBF (a QBF solver)
 
 Authors:
 --------
+
 A lot of Python binding code and documentation has been lifted from PycoSAT
 <https://pypi.python.org/pypi/pycosat>
 
@@ -26,42 +27,47 @@ Usage
 
 The ``pydepqbf`` module has one function: ``solve``.
 
-The second element of the result pair contains a partial certificate
-for the input problem. If the outermost (leftmost) quantifier block of
-a satisfiable QBF is existentially quantified, then the partial
-certificate is an assignment to the variables of this block (and dual
-for unsatisfiable QBFs and universal variables from the outermost
-block, if that block is universally quantified). The partial
-certificate is None if the outermost block of a satisfiable QBF is
-universally quantified or if the outermost block of an unsatisfiable
-QBF is existentially quantified.
+The function ``solve`` returns a tuple containing two elements. The
+first element is an integer, that is either QDPLL_RESULT_SAT or
+QDPLL_RESULT_UNSAT or QDPLL_RESULT_UNKNOWN. The second element
+contains a partial certificate for the input problem. If the outermost
+(leftmost) quantifier block of a satisfiable QBF is existentially
+quantified, then the partial certificate is an assignment to the
+variables of this block (and dual for unsatisfiable QBFs and universal
+variables from the outermost block, if that block is universally
+quantified). The partial certificate is None if the outermost block of
+a satisfiable QBF is universally quantified or if the outermost block
+of an unsatisfiable QBF is existentially quantified.
 
 Example
 -------
 
-Let us consider the following clauses, represented using
-the DIMACS `cnf <http://en.wikipedia.org/wiki/Conjunctive_normal_form>`_
+Let us consider the following problem, represented by using
+the QDIMACS `QDIMACS <http://www.qbflib.org/qdimacs.html>`_
 format::
 
    p cnf 5 3
-   1 -5 4 0
-   -1 5 3 4 0
-   -3 -4 0
+   a 1 2 0
+   e 3 4 0
+   -1 -3 0
+   1 2 4 0
+   1 -4 0
 
-Here, we have 5 variables and 3 clauses, the first clause being
-(x\ :sub:`1`  or not x\ :sub:`5` or x\ :sub:`4`).
-Note that the variable x\ :sub:`2` is not used in any of the clauses,
-which means that for each solution with x\ :sub:`2` = True, we must
-also have a solution with x\ :sub:`2` = False.  In Python, each clause is
+Here, we have 4 variables and 3 clauses, the first clause being
+(not x\ :sub:`1`  or not x\ :sub:`3`).
+In Python, each clause is
 most conveniently represented as a list of integers.  Naturally, it makes
 sense to represent each solution also as a list of integers, where the sign
 corresponds to the Boolean value (+ for True and - for False) and the
 absolute value corresponds to i\ :sup:`th` variable::
 
-   >>> from pydepqbf import solve
-   >>> qcnf = [[1, -5, 4], [-1, 5, 3, 4], [-3, -4]]
-   >>> solve(qcnf)
-   [1, -2, -3, -4, 5]
+   >>> from pydepqbf import solve, QDPLL_QTYPE_FORALL, QDPLL_QTYPE_EXISTS
+   >>> quantifiers = ((QDPLL_QTYPE_FORALL, (1, 2)), (QDPLL_QTYPE_EXISTS, (3, 4)))
+   >>> clauses = ((-1, -3), (1, 2, 4), (1, -4))
+   >>> solve(quantifiers, clauses)
+   (20, [-1, -2])
 
-This solution translates to: x\ :sub:`1` = x\ :sub:`5` = True,
-x\ :sub:`2` = x\ :sub:`3` = x\ :sub:`4` = False
+The first element of the resulting pair is 20 (defined as
+QDPLL_RESULT_UNSAT in the pydepqbf package) and the partial
+certificate translates to: x\ :sub:`1` = x\ :sub:`2` = False.
+
